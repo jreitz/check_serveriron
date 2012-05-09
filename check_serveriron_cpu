@@ -1,0 +1,204 @@
+#!/usr/bin/perl -w
+# vim:ts=4
+#
+# Check a Foundry / Brocade ServerIron WSM for CPU usage
+# Jay Reitz 2012
+#
+# Usage -
+# check_serveriron_cpu [-v] -H switchname [-C community] [-s slotNumber] [-t cpuType]
+#
+# Version 0.1
+
+use strict;
+use Net::SNMP;
+use Getopt::Std;
+use vars qw/$opt_c $opt_w $opt_h $opt_d $opt_H $opt_C $opt_s/;
+#use Data::Dumper;
+
+my $CRITACTIVE = 80;
+my $WARNACTIVE = 60;
+my $MIBFOUNDRY = '1.3.6.1.4.1.1991';
+my $MIBCPUVALUE = '1.1.2.11.1.1.4';
+my $TIMEOUT = 4;
+my $DEBUG = 0;
+my $SWITCH = '';
+my $COMMUNITY = 'public';
+my $SLOT = 1;
+
+my %processorTypes = (management => 1, barrel => 2);
+my @processorTimespans = (5, 300);
+
+my $cpu = {};
+my $hot = {};
+
+my %ERRORS=('OK'=>0,'WARNING'=>1,'CRITICAL'=>2,'UNKNOWN'=>3,'DEPENDENT'=>4);
+
+####
+sub dohelp()
+{
+    print "Usage: $0 [-d] -H switchname [-C community] [-s slotNumber] [-w warnPercent] [-c critPercent]\n";
+    print "Check the processor utilization of a WSM module in a Brocade/Foundry ServerIron";
+    print "  -d\tdebug\n";
+    print "  -H\thostname\n";
+    print "  -C\tcommunity\n";
+    print "  -s\tslot number (default: 1)\n";
+    print "  -w\twarning threshold (default: $WARNACTIVE)\n";
+    print "  -c\tcritical threshold (default: $CRITACTIVE)\n";
+    print "\nExample:\n";
+    print "check_foundry -H balancer1 -C mang -s 1\n";
+
+    exit 0;
+}
+####
+
+sub assureSanity()
+{
+    if (!$SWITCH) {
+        print "ERROR: Must specify Foundry switch name.\n";
+        exit $ERRORS{"UNKNOWN"};
+    }
+    if (!$COMMUNITY) {
+        print "ERROR: Must specify SNMP community string.\n";
+        exit $ERRORS{"UNKNOWN"};
+    }
+    if ($WARNACTIVE > $CRITACTIVE) {
+        print "ERROR: Warning threshold must be lower than critical threshold.\n";
+        exit $ERRORS{"UNKNOWN"};
+    }
+    if ($DEBUG) {
+        print "Switch: $SWITCH\n";
+        print "Community: $COMMUNITY\n";
+        print "Slot: $SLOT\n";
+    }
+}
+
+sub getCpuMibs()
+{
+    my $mibs = [];
+    while (my (undef, $type) = each %processorTypes) {
+        foreach my $span (@processorTimespans) {
+            push @$mibs, "$MIBFOUNDRY.$MIBCPUVALUE.$SLOT.$type.$span";
+        }
+    }
+
+    return $mibs;
+}
+
+sub readFoundryValues()
+{
+    print "Starting SNMP\n" if ($DEBUG);
+    my ($snmp,$snmperr) = Net::SNMP->session(-hostname=>$SWITCH,
+        -community=>$COMMUNITY, -timeout=>$TIMEOUT, -retries=>2);
+    if ($snmperr) {
+        print "ERROR: $snmperr";
+        exit $ERRORS{"UNKNOWN"};
+    }
+
+    #print Dumper(getCpuMibs()) if $DEBUG;
+    #$snmp->snmp_debug() if $DEBUG;
+
+    # gather CPU stats
+    my $resp = $snmp->get_request(-varbindlist=> getCpuMibs());
+    if (!$resp) {
+        print "ERROR: Cannot read cpu OIDs";
+        exit $ERRORS{"UNKNOWN"};
+    }
+
+    #print Dumper($resp) if $DEBUG;
+
+    my ($k, $slot, $proc, $span, $util);
+    foreach my $oid (keys %{$resp}) {
+        $oid =~ /$MIBCPUVALUE\.(\d+)\.(\d+)\.(\d+)/;
+        #print "$oid => ". $resp->{$oid} ."\n" if ($DEBUG);
+
+        $slot = $1;
+        $proc = $2;
+        $span = $3;
+        $util = int($resp->{$oid}) / 100;
+        $k = "$slot:$proc";
+
+        unless (exists $cpu->{$k}) {
+            $cpu->{$k} = {
+                slot     => $slot,
+                proc     => $proc
+            };
+        }
+
+        # set the CPU utilization for this timespan
+        $cpu->{$k}->{"util_$span"} = $util;
+
+        # if this is the highest utilization value, store it
+        if (!exists $hot->{key} || $util > $hot->{util}) {
+            $hot = { key  => $k,
+                     slot => $slot,
+                     proc => $proc,
+                     util => $util
+                   };
+        }
+    }
+
+    $snmp->close();
+    #print Dumper($cpu, $hot) if $DEBUG;
+}
+
+sub listCpus()
+{
+    print "Listing all CPUs...\n" if ($DEBUG);
+    print "Slot Type  5 second      5 minute  hottest?\n";
+    foreach (keys %$cpu) {
+        printf "%-4s %-3s %5d            %3d  %7s\n",
+            $cpu->{$_}->{slot}, $cpu->{$_}->{proc}, $cpu->{$_}->{util_5}, $cpu->{$_}->{util_300}, ($hot->{key} eq $_) ? 'yes' : '';
+    }
+}
+
+sub getPerf()
+{
+    my @p = ();
+    foreach my $k (keys %$cpu) {
+        push @p, getShortName($cpu->{$k}) ."=". $cpu->{$k}->{util_300} ."%;$CRITACTIVE;$WARNACTIVE";
+    }
+    return '|' . join(' ', @p) ."\n";
+}
+
+sub getMsg()
+{
+    return getShortName($hot) .' processor is '. $hot->{util} . "% utilized"
+}
+
+sub getShortName() {
+    my $c = shift @_;
+    if ($c->{proc} == 1) {
+        return 'management';
+    } else {
+        return "barrel". ($c->{proc} - 1);
+    }
+}
+
+######
+# main
+
+getopts('dhH:C:s:w:c:');
+dohelp if ($opt_h);
+$DEBUG = 1 if ($opt_d);
+$COMMUNITY = $opt_C if ($opt_C);
+$SWITCH = $opt_H if ($opt_H);
+$SLOT = $opt_s if ($opt_s);
+$CRITACTIVE = $opt_c if ($opt_c);
+$WARNACTIVE = $opt_w if ($opt_w);
+
+assureSanity();
+readFoundryValues();
+listCpus if ($DEBUG);
+
+# do output
+if ($hot->{util} >= $CRITACTIVE) {
+    print "CRIT: ". getMsg() . getPerf();
+    exit $ERRORS{"CRITICAL"};
+} elsif ($hot->{util} >= $WARNACTIVE) {
+    print "WARN: ". getMsg() . getPerf();
+    exit $ERRORS{"WARN"};
+} else {
+    print "OK: ". getMsg() . getPerf();
+    exit $ERRORS{"OK"};
+}
+

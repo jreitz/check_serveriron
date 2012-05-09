@@ -1,0 +1,17 @@
+check_serveriron_cpu
+
+A Nagios check for Brocade (formerly Foundry) ServerIron CPU utilization.  Handles
+all processors (management and BP(s)) for a WSM in a given slot number.
+
+Written in perl with a minimum of external dependencies.  Includes a PNP template
+for graphing the perfdata output from the check.  Additional serveriron checks will
+be included here soon.
+
+
+Usage:
+
+# check_serveriron_cpu -H myloadbalancer -C communitysecret
+OK: management processor is 3.3% utilized|management=3.3%;50;80 barrel1=2.3%;50;80
+#
+
+>j.
