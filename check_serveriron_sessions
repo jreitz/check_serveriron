@@ -142,10 +142,10 @@ sub sumSessions()
 sub getPerf()
 {
     my @p = ();
+    push @p, "utilized=". $agg->{percent} ."%;$CRITACTIVE;$WARNACTIVE";
     foreach my $k (keys %$sess) {
         push @p, getShortName($sess->{$k}) ."=". $sess->{$k}->{current};
     }
-    push @p, "utilized=". $agg->{percent} ."%;$CRITACTIVE;$WARNACTIVE";
     return '|' . join(' ', @p) ."\n";
 }
 
