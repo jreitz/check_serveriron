@@ -1,17 +1,28 @@
-check_serveriron_cpu
+check_serveriron
+-=-=-=-==-=-=-=-
 
-A Nagios check for Brocade (formerly Foundry) ServerIron CPU utilization.  Handles
-all processors (management and BP(s)) for a WSM in a given slot number.
+Nagios checks for Brocade (formerly Foundry) ServerIron utilization.  These checks
+should work on any JetCore or ADX based ServerIron but I have a limited number of
+configurations on which wot test.
 
-Written in perl with a minimum of external dependencies.  Includes a PNP template
-for graphing the perfdata output from the check.  Additional serveriron checks will
+check_serveriron_cpu:       CPU utilization for a given WSM.  Monitors all processors 
+                              (management and BP(s)).
+check_serveriron_sessions:  Session table utilization for a ServerIron chassis.
+                              Monitors all BP(s) in all slots.
+
+Written in perl with a minimum of external dependencies.  Includes PNP templates
+for graphing the perfdata output from the checks.  Additional SI checks will
 be included here soon.
 
 
 Usage:
+-=--=-
 
 # check_serveriron_cpu -H myloadbalancer -C communitysecret
-OK: management processor is 3.3% utilized|management=3.3%;50;80 barrel1=2.3%;50;80
-#
+OK: management processor is 3.3% utilized|management=3.3%;50;80 barrel1=2.3%;80;40
+
+# check_serveriron_sessions -H myloadbalancer -C communitysecret
+OK: BP sessions 27% utilized|slot1=540003 slot2=539998 utilized=27%;80;60
 
 >j.
+
