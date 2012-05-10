@@ -1,0 +1,188 @@
+#!/usr/bin/perl -w
+# vim:ts=4
+#
+# Check a Foundry / Brocade ServerIron session usage
+# Jay Reitz 2012
+#
+# Usage -
+# check_serveriron_sessions [-v] -H switchname [-C community] [-s slotNumber]
+#
+# Version 0.1
+
+use strict;
+use Net::SNMP;
+use Getopt::Std;
+use vars qw/$opt_c $opt_w $opt_h $opt_d $opt_H $opt_C/;
+
+my $CRITACTIVE = 80;
+my $WARNACTIVE = 60;
+my $MIBFOUNDRY = '1.3.6.1.4.1.1991';
+my $MIBSESS = '1.1.4.29.2';
+my $TIMEOUT = 4;
+my $DEBUG = 0;
+my $SWITCH = '';
+my $COMMUNITY = 'public';
+
+my %tableEntries = (slot => 1, available => 2, total => 3, current => 4);
+
+my $sess = {};
+my $agg = {};
+
+my %ERRORS=('OK'=>0,'WARNING'=>1,'CRITICAL'=>2,'UNKNOWN'=>3,'DEPENDENT'=>4);
+
+####
+sub doHelp()
+{
+    print "Usage: $0 [-d] -H switchname [-C community] [-s slotNumber] [-w warnPercent] [-c critPercent]\n";
+    print "Check the session utilization of a Brocade/Foundry ServerIron";
+    print "  -d\tdebug\n";
+    print "  -H\thostname\n";
+    print "  -C\tcommunity\n";
+    print "  -w\twarning threshold in percent used sessions (default: $WARNACTIVE)\n";
+    print "  -c\tcritical threshold in percent used sessions (default: $CRITACTIVE)\n";
+    print "\nExample:\n";
+    print "$0 -H balancer1 -C mang\n";
+
+    exit 0;
+}
+####
+
+sub assureSanity()
+{
+    if (!$SWITCH) {
+        print "ERROR: Must specify Foundry switch name.\n";
+        exit $ERRORS{"UNKNOWN"};
+    }
+    if (!$COMMUNITY) {
+        print "ERROR: Must specify SNMP community string.\n";
+        exit $ERRORS{"UNKNOWN"};
+    }
+    if ($WARNACTIVE > $CRITACTIVE) {
+        print "ERROR: Warning threshold must be lower than critical threshold.\n";
+        exit $ERRORS{"UNKNOWN"};
+    }
+    if ($DEBUG) {
+        use Data::Dumper;
+        print "Switch: $SWITCH\n";
+        print "Community: $COMMUNITY\n";
+    }
+}
+
+sub getSessionMib()
+{
+    return "$MIBFOUNDRY.$MIBSESS";
+}
+
+sub readFoundryValues()
+{
+    print "Starting SNMP\n" if ($DEBUG);
+    my ($snmp,$snmperr) = Net::SNMP->session(-hostname=>$SWITCH,
+        -community=>$COMMUNITY, -timeout=>$TIMEOUT, -retries=>2);
+    if ($snmperr) {
+        print "ERROR: $snmperr";
+        exit $ERRORS{"UNKNOWN"};
+    }
+
+    #$snmp->snmp_debug() if $DEBUG;
+
+    # gather CPU stats
+    my $resp = $snmp->get_table(-baseoid=> getSessionMib());
+    if (!$resp) {
+        print "ERROR: Cannot read cpu OIDs";
+        exit $ERRORS{"UNKNOWN"};
+    }
+
+    print Dumper($resp) if $DEBUG;
+
+    my ($k, $type, $slot, $span, $util);
+    foreach my $oid (keys %{$resp}) {
+        if ($oid =~ /$MIBSESS\.1\.(\d+)\.(\d+)/) {
+
+            $type = $1;
+            $slot = $2;
+            $k = $slot;
+
+            unless (exists $sess->{$k}) {
+                $sess->{$k} = {
+                    slot     => $slot,
+                };
+            }
+
+            # set the CPU utilization for this timespan
+            if ($type == $tableEntries{total}) {
+                $sess->{$k}->{total} = $resp->{$oid};
+            } elsif ($type == $tableEntries{current}) {
+                $sess->{$k}->{current} = $resp->{$oid};
+            } elsif ($type == $tableEntries{available}) {
+                $sess->{$k}->{available} = $resp->{$oid};
+            }
+
+
+        } else {
+            print "ERROR: Unknown MIB value found: $oid\nPossibly BP number?\n";
+            exit $ERRORS{"UNKNOWN"};
+        }
+    }
+
+    $snmp->close();
+}
+
+sub sumSessions()
+{
+    foreach my $entry (keys %tableEntries) {
+        next if ($entry eq 'slot');
+        $agg->{$entry} = 0;
+        foreach my $k (keys %$sess) {
+            $agg->{$entry} += $sess->{$k}->{$entry};
+        }
+    }
+    $agg->{percent} = $agg->{current} / $agg->{total};
+}
+
+sub getPerf()
+{
+    my @p = ();
+    foreach my $k (keys %$sess) {
+        push @p, getShortName($sess->{$k}) ."=". $sess->{$k}->{current};
+    }
+    push @p, "utilized=". $agg->{percent} ."%;$CRITACTIVE;$WARNACTIVE";
+    return '|' . join(' ', @p) ."\n";
+}
+
+sub getMsg()
+{
+    return "BP sessions ". $agg->{percent} . "% utilized"
+}
+
+sub getShortName() {
+    my $c = shift @_;
+    return "slot". $c->{slot};
+}
+
+######
+# main
+
+getopts('dhH:C:w:c:');
+doHelp() if ($opt_h);
+$DEBUG = 1 if ($opt_d);
+$COMMUNITY = $opt_C if ($opt_C);
+$SWITCH = $opt_H if ($opt_H);
+$CRITACTIVE = $opt_c if ($opt_c);
+$WARNACTIVE = $opt_w if ($opt_w);
+
+assureSanity();
+readFoundryValues();
+sumSessions();
+
+# do output
+if ($agg->{percent} >= $CRITACTIVE) {
+    print "CRIT: ". getMsg() . getPerf();
+    exit $ERRORS{"CRITICAL"};
+} elsif ($agg->{percent} >= $WARNACTIVE) {
+    print "WARN: ". getMsg() . getPerf();
+    exit $ERRORS{"WARN"};
+} else {
+    print "OK: ". getMsg() . getPerf();
+    exit $ERRORS{"OK"};
+}
+

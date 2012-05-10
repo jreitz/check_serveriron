@@ -5,7 +5,7 @@
 # Jay Reitz 2012
 #
 # Usage -
-# check_serveriron_cpu [-v] -H switchname [-C community] [-s slotNumber] [-t cpuType]
+# check_serveriron_cpu [-v] -H switchname [-C community] [-s slotNumber]
 #
 # Version 0.1
 
@@ -13,7 +13,6 @@ use strict;
 use Net::SNMP;
 use Getopt::Std;
 use vars qw/$opt_c $opt_w $opt_h $opt_d $opt_H $opt_C $opt_s/;
-#use Data::Dumper;
 
 my $CRITACTIVE = 80;
 my $WARNACTIVE = 60;
@@ -45,7 +44,7 @@ sub dohelp()
     print "  -w\twarning threshold (default: $WARNACTIVE)\n";
     print "  -c\tcritical threshold (default: $CRITACTIVE)\n";
     print "\nExample:\n";
-    print "check_foundry -H balancer1 -C mang -s 1\n";
+    print "$0 -H balancer1 -C mang -s 1\n";
 
     exit 0;
 }
@@ -66,6 +65,7 @@ sub assureSanity()
         exit $ERRORS{"UNKNOWN"};
     }
     if ($DEBUG) {
+        use Data::Dumper;
         print "Switch: $SWITCH\n";
         print "Community: $COMMUNITY\n";
         print "Slot: $SLOT\n";
@@ -94,7 +94,6 @@ sub readFoundryValues()
         exit $ERRORS{"UNKNOWN"};
     }
 
-    #print Dumper(getCpuMibs()) if $DEBUG;
     #$snmp->snmp_debug() if $DEBUG;
 
     # gather CPU stats
@@ -104,7 +103,7 @@ sub readFoundryValues()
         exit $ERRORS{"UNKNOWN"};
     }
 
-    #print Dumper($resp) if $DEBUG;
+    print Dumper($resp) if $DEBUG;
 
     my ($k, $slot, $proc, $span, $util);
     foreach my $oid (keys %{$resp}) {
@@ -138,7 +137,6 @@ sub readFoundryValues()
     }
 
     $snmp->close();
-    #print Dumper($cpu, $hot) if $DEBUG;
 }
 
 sub listCpus()
