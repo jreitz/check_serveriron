@@ -3,7 +3,7 @@ check_serveriron
 
 Nagios checks for Brocade (formerly Foundry) ServerIron utilization.  These checks
 should work on any JetCore or ADX based ServerIron but I have a limited number of
-configurations on which wot test.
+configurations on which to test.
 
 check_serveriron_cpu:       CPU utilization for a given WSM.  Monitors all processors 
                               (management and BP(s)).
