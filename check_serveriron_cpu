@@ -152,7 +152,7 @@ sub listCpus()
 sub getPerf()
 {
     my @p = ();
-    foreach my $k (keys %$cpu) {
+    foreach my $k (sort keys %$cpu) {
         push @p, getShortName($cpu->{$k}) ."=". $cpu->{$k}->{util_300} ."%;$CRITACTIVE;$WARNACTIVE";
     }
     return '|' . join(' ', @p) ."\n";
